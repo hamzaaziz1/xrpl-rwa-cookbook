@@ -6,9 +6,11 @@
   "license": "ISC",
   "scripts": {
     "fund": "tsx src/fund.ts",
-    "amendments": "tsx src/amendments.ts"
+    "amendments": "tsx src/amendments.ts",
+    "credentials": "tsx src/credentials.ts"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "xrpl": "^5.1.0"
   },
   "devDependencies": {
