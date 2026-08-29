@@ -1,0 +1,19 @@
+{
+  "name": "xrpl-rwa-cookbook",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "XRPL compliance primitives cookbook",
+  "license": "ISC",
+  "scripts": {
+    "fund": "tsx src/fund.ts",
+    "amendments": "tsx src/amendments.ts"
+  },
+  "dependencies": {
+    "xrpl": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}
