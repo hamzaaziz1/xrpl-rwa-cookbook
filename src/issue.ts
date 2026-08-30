@@ -94,8 +94,6 @@ await send('Payment (issue tokens)', {
 
 await showLines('tokens issued')
 
-console.log(`\nHOLDER_SEED=${holder.seed}`)
-console.log(`HOLDER_ADDRESS=${holder.address}`)
 
 
 await client.disconnect()

@@ -9,19 +9,17 @@ function need(name: string): string {
 }
 
 const CURRENCY = 'PRP'
-const tfSetfAuth   = 0x00010000
-const tfSetFreeze  = 0x00100000
-const tfClearFreeze= 0x00200000
+const tfSetfAuth    = 0x00010000
+const tfSetFreeze   = 0x00100000
+const tfClearFreeze = 0x00200000
 
 const NETWORK = process.env.XRPL_NETWORK ?? 'testnet'
 const client = await connect(NETWORK === 'devnet' ? DEVNET : TESTNET)
 
 const issuer = Wallet.fromSeed(need('ISSUER_SEED'))
-const alice  = Wallet.fromSeed(need('HOLDER_SEED'))     // has 250 PRP
 
 console.log(`\nnetwork: ${NETWORK}`)
 console.log(`issuer:  ${issuer.address}`)
-console.log(`alice:   ${alice.address}`)
 
 async function send(label: string, tx: any, wallet: Wallet, allowFail = false) {
   process.stdout.write(`> ${label} ... `)
@@ -37,6 +35,39 @@ async function send(label: string, tx: any, wallet: Wallet, allowFail = false) {
   }
 }
 
+// create a holder, authorize it, optionally fund it with PRP
+async function makeHolder(name: string, prp: string) {
+  const { wallet } = await client.fundWallet()
+  console.log(`${name}:   ${wallet.address}  (fresh)`)
+
+  await send(`${name} opens trust line`, {
+    TransactionType: 'TrustSet',
+    Account: wallet.address,
+    LimitAmount: { currency: CURRENCY, issuer: issuer.address, value: '1000000' },
+  }, wallet)
+
+  await send(`issuer authorizes ${name}`, {
+    TransactionType: 'TrustSet',
+    Account: issuer.address,
+    LimitAmount: { currency: CURRENCY, issuer: wallet.address, value: '0' },
+    Flags: tfSetfAuth,
+  }, issuer)
+
+  if (prp !== '0') {
+    await send(`issuer sends ${prp} PRP to ${name}`, {
+      TransactionType: 'Payment',
+      Account: issuer.address,
+      Destination: wallet.address,
+      Amount: { currency: CURRENCY, issuer: issuer.address, value: prp },
+    }, issuer)
+  }
+
+  return wallet
+}
+
+const alice = await makeHolder('alice', '250')
+const bob   = await makeHolder('bob',   '0')
+
 async function line(account: string) {
   const res: any = await client.request({
     command: 'account_lines', account, ledger_index: 'validated',
@@ -48,30 +79,13 @@ async function report(label: string) {
   const a = await line(alice.address)
   const b = await line(bob.address)
   console.log(`\n--- ${label} ---`)
-  console.log(`  alice: ${a?.balance ?? '-'} PRP   frozen: ${a?.freeze_peer ? 'YES' : 'no'}`)
-  console.log(`  bob:   ${b?.balance ?? '-'} PRP\n`)
+  console.log(`  alice: ${a?.balance ?? '0'} PRP   frozen: ${a?.freeze_peer ? 'YES' : 'no'}`)
+  console.log(`  bob:   ${b?.balance ?? '0'} PRP\n`)
 }
-
-// second holder, authorized, so we have somewhere to send
-const { wallet: bob } = await client.fundWallet()
-console.log(`bob:     ${bob.address}  (fresh)\n`)
-
-await send('bob opens trust line', {
-  TransactionType: 'TrustSet',
-  Account: bob.address,
-  LimitAmount: { currency: CURRENCY, issuer: issuer.address, value: '1000000' },
-}, bob)
-
-await send('issuer authorizes bob', {
-  TransactionType: 'TrustSet',
-  Account: issuer.address,
-  LimitAmount: { currency: CURRENCY, issuer: bob.address, value: '0' },
-  Flags: tfSetfAuth,
-}, issuer)
 
 await report('starting state')
 
-// 1. freeze alice
+// 1. freeze
 await send('FREEZE alice', {
   TransactionType: 'TrustSet',
   Account: issuer.address,
@@ -107,7 +121,7 @@ await send('alice -> bob', {
 
 await report('unfrozen, transfer succeeded')
 
-// 3. clawback — no consent from alice
+// 3. clawback — alice does not sign
 console.log('(issuer claws back 100 PRP from alice — alice does not sign)')
 await send('CLAWBACK', {
   TransactionType: 'Clawback',

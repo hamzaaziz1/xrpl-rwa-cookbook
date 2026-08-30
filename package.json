@@ -12,7 +12,8 @@
     "issuer": "tsx src/issuer-setup.ts",
     "issue": "tsx src/issue.ts",
     "powers": "tsx src/issuer-powers.ts",
-    "dex": "tsx src/permissioned-dex.ts"
+    "dex": "tsx src/permissioned-dex.ts",
+    "all": "./run-all.sh"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

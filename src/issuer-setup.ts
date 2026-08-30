@@ -8,14 +8,14 @@ function need(name: string): string {
   return v
 }
 
-// AccountSet flag numbers
-const asfRequireAuth              = 2
-const asfDefaultRipple            = 8
-const asfAllowTrustLineClawback   = 16
+// AccountSet flag numbers (what you SET)
+const asfRequireAuth            = 2
+const asfDefaultRipple          = 8
+const asfAllowTrustLineClawback = 16
 
-// AccountRoot ledger flags (what we read back)
-const lsfRequireAuth   = 0x00040000
-const lsfDefaultRipple = 0x00800000
+// AccountRoot ledger flags (what you READ BACK)
+const lsfRequireAuth            = 0x00040000
+const lsfDefaultRipple          = 0x00800000
 const lsfAllowTrustLineClawback = 0x80000000
 
 const NETWORK = process.env.XRPL_NETWORK ?? 'testnet'
@@ -26,51 +26,60 @@ const issuer = Wallet.fromSeed(need('ISSUER_SEED'))
 console.log(`\nnetwork: ${NETWORK}`)
 console.log(`issuer:  ${issuer.address}\n`)
 
-async function send(label: string, tx: any, wallet: Wallet) {
-  process.stdout.write(`> ${label} ... `)
-  const res: any = await client.submitAndWait(tx, { wallet })
-  const code = res.result.meta.TransactionResult
-  console.log(`${code}`)
-  if (code !== 'tesSUCCESS') throw new Error(`${label} failed: ${code}`)
-  return res
-}
-
-async function showFlags(label: string) {
+async function flags(): Promise<number> {
   const res: any = await client.request({
     command: 'account_info',
     account: issuer.address,
     ledger_index: 'validated',
   })
-  const f = res.result.account_data.Flags ?? 0
-  console.log(`\n--- ${label} ---`)
-  console.log(`  raw flags:   0x${(f >>> 0).toString(16).padStart(8, '0')}`)
-  console.log(`  RequireAuth: ${(f & lsfRequireAuth) ? 'on' : 'off'}`)
-  console.log(`  DefaultRipple: ${(f & lsfDefaultRipple) ? 'on' : 'off'}`)
-  console.log(`  Clawback:    ${(f & lsfAllowTrustLineClawback) ? 'on' : 'off'}\n`)
+  return res.result.account_data.Flags ?? 0
 }
 
-await showFlags('before')
+function show(label: string, f: number) {
+  console.log(`\n--- ${label} ---`)
+  console.log(`  raw flags:     0x${(f >>> 0).toString(16).padStart(8, '0')}`)
+  console.log(`  RequireAuth:   ${(f & lsfRequireAuth) ? 'on' : 'off'}`)
+  console.log(`  DefaultRipple: ${(f & lsfDefaultRipple) ? 'on' : 'off'}`)
+  console.log(`  Clawback:      ${(f & lsfAllowTrustLineClawback) ? 'on' : 'off'}\n`)
+}
 
-// clawback FIRST — it can never be set once tokens exist
-await send('AccountSet: AllowTrustLineClawback', {
-  TransactionType: 'AccountSet',
-  Account: issuer.address,
-  SetFlag: asfAllowTrustLineClawback,
-}, issuer)
+// only send if the flag isn't already set — safe to re-run
+async function ensure(label: string, setFlag: number, ledgerBit: number) {
+  const f = await flags()
+  if (f & ledgerBit) {
+    console.log(`> ${label} ... already set, skipping`)
+    return
+  }
+  process.stdout.write(`> ${label} ... `)
+  const res: any = await client.submitAndWait({
+    TransactionType: 'AccountSet',
+    Account: issuer.address,
+    SetFlag: setFlag,
+  }, { wallet: issuer })
+  const code = res.result.meta.TransactionResult
+  console.log(code)
+  if (code !== 'tesSUCCESS') {
+    if (code === 'tecOWNERS') {
+      console.log(`
+  tecOWNERS means this account already owns trust lines.
+  AllowTrustLineClawback can only be set on an issuer that has never
+  issued anything. If you need clawback, create a fresh issuer account
+  and run this script before any issuance.
+`)
+    }
+    throw new Error(`${label} failed: ${code}`)
+  }
+}
 
-await send('AccountSet: RequireAuth', {
-  TransactionType: 'AccountSet',
-  Account: issuer.address,
-  SetFlag: asfRequireAuth,
-}, issuer)
+const before = await flags()
+show('before', before)
 
-await send('AccountSet: DefaultRipple', {
-  TransactionType: 'AccountSet',
-  Account: issuer.address,
-  SetFlag: asfDefaultRipple,
-}, issuer)
+// clawback FIRST — it can never be set once trust lines exist
+await ensure('AllowTrustLineClawback', asfAllowTrustLineClawback, lsfAllowTrustLineClawback)
+await ensure('RequireAuth',            asfRequireAuth,            lsfRequireAuth)
+await ensure('DefaultRipple',          asfDefaultRipple,          lsfDefaultRipple)
 
-await showFlags('after')
+show('after', await flags())
 
 await client.disconnect()
-console.log('issuer configured. tokens can now be issued.\n')
+console.log('issuer configured.\n')

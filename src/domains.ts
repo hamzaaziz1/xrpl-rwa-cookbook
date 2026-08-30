@@ -119,6 +119,5 @@ await send('CredentialDelete', {
 
 await report('credential revoked', domainId)
 
-console.log(`keep this for the next step:  DOMAIN_ID=${domainId}\n`)
 
 await client.disconnect()
