@@ -9,7 +9,8 @@
     "amendments": "tsx src/amendments.ts",
     "credentials": "tsx src/credentials.ts",
     "domains": "tsx src/domains.ts",
-    "issuer": "tsx src/issuer-setup.ts"
+    "issuer": "tsx src/issuer-setup.ts",
+    "issue": "tsx src/issue.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
