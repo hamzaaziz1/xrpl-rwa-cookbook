@@ -11,7 +11,8 @@
     "domains": "tsx src/domains.ts",
     "issuer": "tsx src/issuer-setup.ts",
     "issue": "tsx src/issue.ts",
-    "powers": "tsx src/issuer-powers.ts"
+    "powers": "tsx src/issuer-powers.ts",
+    "dex": "tsx src/permissioned-dex.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
