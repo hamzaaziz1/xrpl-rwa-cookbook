@@ -8,7 +8,8 @@
     "fund": "tsx src/fund.ts",
     "amendments": "tsx src/amendments.ts",
     "credentials": "tsx src/credentials.ts",
-    "domains": "tsx src/domains.ts"
+    "domains": "tsx src/domains.ts",
+    "issuer": "tsx src/issuer-setup.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
