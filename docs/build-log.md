@@ -1,0 +1,329 @@
+# build log: compliant RWA tokenization on the XRP Ledger
+
+a running account of building this thing. written as i go, so the wrong turns
+are still in it.
+
+---
+
+## day 1 — the plan changed before i wrote a line of code
+
+the idea was straightforward enough. issue a token representing fractional
+ownership of a real asset, gate who can hold and trade it using on-chain
+identity, and give the issuer the controls a regulated institution actually
+needs. freeze, clawback, an allowlist. build it on the XRP Ledger because
+that's where the interesting tokenization work is happening.
+
+my first sketch was: mint a Multi-Purpose Token, wrap it in a permissioned
+domain, let members trade it on the permissioned DEX.
+
+that doesn't work. MPTs have a flag called Can Trade, which reads like it
+should mean you can trade them, but MPT support on the decentralized exchange
+isn't implemented yet. it's a separate amendment, MPTokensV2, still in
+development. so a secondary market in MPTs isn't a thing i could build. it's a
+thing i could describe.
+
+second casualty: Batch. bundling transactions so they either all succeed or all
+fail is the obvious way to do delivery-versus-payment — buyer pays, seller
+delivers, no window where one has happened and the other hasn't. Batch was
+disabled after a bug in how it validated signatures on the inner transactions,
+and replaced by BatchV1_1.
+
+so the architecture became:
+
+- the asset is a **trust line token**, not an MPT, because that's what the
+  permissioned DEX can actually trade today
+- MPT stays in the project as a second issuance path, with escrow-based
+  settlement instead of an order book
+- settlement is not atomic, and i say why rather than pretending it is
+
+i'd rather ship something where the compromises are documented than something
+that quietly doesn't do what the readme claims.
+
+---
+
+## day 1 — proving it instead of trusting it
+
+everything above came from reading. before building on it i wanted the network
+itself to confirm it.
+
+the XRP Ledger keeps a public record of which protocol features are switched
+on. amendments, they're called — each one activates only after enough
+validators vote for it, so different networks are on different versions.
+
+reading that record was easy. making sense of it wasn't, because the ledger
+identifies each amendment by a 64-character hex string, not a name. the obvious
+move is to copy the IDs from the docs into a lookup table. i didn't like that.
+it goes stale, and one mistyped character sends you debugging code that's fine.
+
+turns out you don't need the table. **an amendment's ID is the first half of
+the SHA-512 hash of its name.** hash the string `Credentials` and you get its
+ID exactly.
+
+```ts
+function amendmentId(name: string): string {
+  return createHash('sha512').update(name).digest('hex').slice(0, 64).toUpperCase()
+}
+```
+
+so the script holds a list of words and derives the rest. adding a new
+amendment to watch is one line.
+
+what it told me, on testnet:
+
+| amendment | enabled |
+|---|---|
+| Credentials | yes |
+| MPTokensV1 | yes |
+| MPTokensV2 | **no** |
+| PermissionedDomains | yes |
+| PermissionedDEX | yes |
+| TokenEscrow | yes |
+| Clawback | yes |
+| DeepFreeze | yes |
+| Batch | no |
+| BatchV1_1 | no |
+
+everything the design needs is on. the two things it doesn't rely on are off.
+that's the architecture confirmed by the network rather than by me.
+
+then i ran it against devnet and got something i wasn't expecting. 87
+amendments instead of 78, and **BatchV1_1 is live there.** which means atomic
+delivery-versus-payment is testable today, just not on the network i'm
+building on. that's now a devnet-only branch of the project rather than
+something i wrote off.
+
+that finding alone justified the script. i'd have missed it entirely.
+
+---
+
+## day 1 — the boring failures
+
+worth recording because they're most of what actually happens.
+
+`package.json` ended up with two opening braces and two `"type"` keys after i
+hand-edited it. node's error was `ERR_INVALID_PACKAGE_CONFIG`, which tells you
+nothing about which character is wrong. JSON has no concept of a duplicate key
+being an error — the last one silently wins — so even after fixing the brace,
+`"type": "commonjs"` further down was quietly overriding the `"module"` i'd
+added at the top.
+
+lesson: use `npm pkg set` instead of editing the file by hand.
+
+then a `client` declared twice, then an import i'd forgotten. three failures in
+a row, all before anything touched the network.
+
+that's a useful distinction actually. errors that fire during the transform
+step are my code failing to parse. errors that come back as `tec` or `tem`
+codes are the ledger rejecting something. completely different debugging.
+i spent a while sorting failures into those two buckets before i had any
+transaction land.
+
+---
+
+## day 2 — credentials, and why they're two-sided
+
+a credential is one account making a signed statement about another. "i certify
+this account is KYC-verified." a verified badge with a named issuer.
+
+the part i didn't expect: the issuer creates it, and the subject has to
+separately accept it. you can't staple an attribute onto someone's account
+without their agreement.
+
+so there are three states, not two. doesn't exist, issued-but-not-accepted, and
+active. i watched the flags field go `0x00000000` → `0x00010000` → gone across
+the lifecycle.
+
+that middle state is going to matter in the UI. "approved but not yet accepted"
+is a real thing a user can be sitting in, and if i'd assumed two states i'd
+have built something that shows them as rejected.
+
+one detail worth knowing: the credential object lives on the **subject's**
+account, not the issuer's. the person holds the badge; the issuer just signed
+it. so you query the holder to find out what they've been granted.
+
+---
+
+## day 2 — the bit that makes this worth building
+
+permissioned domains. a domain is a list of credentials it accepts. hold one,
+you're in.
+
+there is no member list. anywhere. i went looking for it and it doesn't exist,
+and that's deliberate — membership is computed on the fly from whatever
+credentials you're currently holding. so my `isMember` function reads the
+domain's accepted-credential list, reads the account's credentials, and
+intersects them. it's derived state, not stored state.
+
+which has a consequence i want to spell out, because it's the whole point.
+
+i ran four membership checks:
+
+```
+domain created, no credential        NO
+credential issued, NOT accepted      NO
+credential accepted                  YES
+credential revoked                   NO
+```
+
+between the third and fourth, i deleted one credential. **the domain was never
+touched.** access disappeared anyway.
+
+in a real deployment that's a regulator pulling someone's accreditation and
+every venue that trusts that accreditation locking them out simultaneously. no
+allowlist to update, no coordination between platforms, no window where one
+venue has processed the revocation and another hasn't.
+
+i've built allowlists on EVM. they're arrays you maintain, and every contract
+that cares needs its own copy or a call out to a registry. this is the same
+outcome with none of the synchronisation problem, because there's nothing to
+synchronise.
+
+that's the first thing in this project that made me think the ledger choice
+was actually right rather than just topical.
+
+second-order thing i noticed: because it's derived, the check is only as fresh
+as the ledger you read. i'm querying `validated`, which is the safe choice.
+reading `current` would give you membership based on a ledger that hasn't been
+finalised yet, and for a compliance check that's exactly the wrong tradeoff.
+
+---
+
+## day 2 — issuer controls
+
+next: the asset itself. fractional property title, currency code `PRP`.
+
+before issuing anything, the issuer account has to declare what powers it's
+keeping. three flags:
+
+- **RequireAuth** — nobody holds this token without individual approval. the
+  allowlist.
+- **AllowTrustLineClawback** — the issuer can recover tokens. sanctions, court
+  orders, fraud.
+- **DefaultRipple** — without it, tokens only move between issuer and holder,
+  never holder to holder. no secondary market at all.
+
+the clawback flag has a trap in it: **it can't be enabled once any tokens
+exist.** set it before you issue, or recreate the issuer account. i set it
+first in the script for that reason.
+
+the account flags went `0x00000000` → `0x80840000`, which decomposes cleanly:
+`0x80000000` clawback, `0x00800000` default ripple, `0x00040000` require auth.
+three settings, one integer.
+
+one wrinkle that cost me a minute. the numbers you use to *set* a flag (2, 8,
+16) are not the bits you read back. setting takes an index, the ledger stores a
+bit position. two numbering schemes for the same thing.
+
+---
+
+## day 2 — one error code, four meanings
+
+issuing tokens is three transactions. the holder opens a trust line, saying
+"i'm willing to hold up to X of this from this issuer" — you opt in, and you
+set your own ceiling, so nobody can push tokens at you unsolicited. then the
+issuer authorises that line. then the issuer sends a payment.
+
+i deliberately ran the payment before the authorisation, to see what refusal
+looks like. i expected `tecNO_AUTH`.
+
+i got **`tecPATH_DRY`**.
+
+what's happening is that the payment engine looks for a route to deliver the
+tokens, finds the unauthorised line unusable, and reports "no liquidity"
+instead of "not authorised." technically true, diagnostically useless.
+
+then later, testing freeze, an authorised holder with a healthy balance tried
+to send tokens on a frozen line. `tecPATH_DRY` again.
+
+so far i've seen that one code mean:
+
+- no trust line exists
+- the line exists but isn't authorised
+- the line is frozen
+- there's genuinely no path
+
+four causes, one error. which means any SDK worth using has to catch
+`tecPATH_DRY` and go figure out which one actually applies before showing
+anything to a user. telling someone "no liquidity" when the real answer is "you
+haven't been KYC'd yet" is a terrible error message, and it's the default.
+
+i've also got the field names wrong once already. querying `account_lines` on
+the holder, `authorized` means *the holder authorised the issuer* — the
+opposite direction to what i wanted. the field for "did the issuer authorise
+this line" is `peer_authorized`. trust lines are two-sided objects and every
+field has a side, which i keep forgetting.
+
+---
+
+## day 2 — the run that lied to me
+
+i re-ran the issuance script after fixing that field name and got:
+
+```
+--- line open, NOT authorized ---
+  balance:    250 PRP
+  authorized: YES
+```
+
+the label says not authorised. the state says authorised, with a balance. both
+printed by the same script, one line apart.
+
+nothing was broken. the script assumes it starts from an empty account, and the
+second run didn't — the trust line was already there and already authorised
+from the first run. so every step succeeded, the balances climbed 250 → 500 →
+750, and the labels described a sequence that hadn't happened.
+
+this is the failure mode i care most about. it didn't error. it produced
+confident, well-formatted, completely wrong output. if that had happened in a
+demo rather than in front of me, nobody would have caught it.
+
+fix was to create a fresh holder account per run, so the script genuinely
+starts from zero every time. costs a few seconds of faucet time.
+
+the cost of that fix: the holder is now disposable, so anything downstream
+needs its details handed forward explicitly. small, but it's the same shape as
+the problem it solved — state that's implicit is state that will surprise you.
+
+i'm noting this because the same principle governs the registry design later
+on. a projection you can rebuild from scratch and get an identical result is
+trustworthy. one that only works if you've run the right things in the right
+order is not.
+
+---
+
+## day 2 — what the issuer can actually do
+
+the regulator demo. alice holds PRP, and the issuer:
+
+```
+FREEZE alice          -> alice tries to send 50 to bob -> tecPATH_DRY
+UNFREEZE alice        -> same payment                  -> tesSUCCESS
+CLAWBACK 100 from alice
+```
+
+balances: alice 750 → 700 after sending bob 50 → **600 after the clawback.**
+
+the clawback is the one to sit with. alice held 700 PRP. she wasn't frozen. she
+signed nothing and approved nothing. the issuer submitted one transaction and
+her balance became 600.
+
+on EVM that's a function you write into the token contract deliberately, and an
+auditor flags it as centralisation risk in the report. here it's a protocol
+primitive — off by default, and the issuer has to opt in before issuing a
+single token, but native.
+
+i think both reactions to that are correct. it's exactly what a regulated
+issuer needs in order to comply with a court order or a sanctions listing. it's
+also exactly what people mean when they say a chain isn't credibly neutral. the
+honest framing is that this is a deliberate trade, made at the protocol level,
+which is at least more visible than the same power buried in a proxy contract's
+implementation.
+
+the transfer between alice and bob also quietly proved the DefaultRipple flag
+was necessary. without it that payment fails, because tokens can only move
+between the issuer and a holder. the entire secondary market depends on a flag
+that sounds like an obscure setting.
+
+---
+
+*continues.*
