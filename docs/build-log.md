@@ -327,3 +327,34 @@ that sounds like an obscure setting.
 ---
 
 *continues.*
+
+## day 2 — a market that non-members can't enter
+
+the last piece. alice and bob both hold KYC credentials and are in the domain.
+carol holds PRP, has an authorised trust line, and no credential.
+
+alice offers 100 PRP for 10 XRP inside the domain. bob takes the other side.
+alice 500 -> 400 PRP 100 -> 110 XRP
+bob 0 -> 100 PRP 100 -> 90 XRP
+carol 100 PRP, untouched
+
+a hundred tokens moved against ten XRP between two parties, neither of whom is
+the issuer. that's a real secondary market trade, settling under transfer
+restrictions.
+
+carol got `tecNO_PERMISSION`. a clear error for once.
+
+but the mechanism is the thing i want to record, because it's not what i
+assumed. carol isn't blocked by a permission check that runs when she trades.
+her offer would go into a **different order book** — permissioned offers carry
+a domain ID and only ever match other offers carrying the same one. she can't
+place into that book at all.
+
+so it's not compliance by veto. it's compliance by market segregation. the
+non-member isn't rejected at the point of trade; they were never in the same
+market. which is a stronger guarantee, because there's no code path where a
+check gets skipped and a trade slips through.
+
+carol also kept everything. she wasn't frozen, wasn't penalised, wasn't flagged.
+she just isn't in that venue. that's a meaningfully different posture from a
+blocklist, and it's closer to how permissioned markets actually work off-chain.
