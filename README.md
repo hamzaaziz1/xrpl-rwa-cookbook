@@ -24,6 +24,7 @@ the ledger at each step.
 npm install
 npm run fund # copy the output into .env
 npm run issuer # run once, before issuing anything
+npm run all   # runs everything end to end
 
 ## Notes from building this
 
