@@ -358,3 +358,97 @@ check gets skipped and a trade slips through.
 carol also kept everything. she wasn't frozen, wasn't penalised, wasn't flagged.
 she just isn't in that venue. that's a meaningfully different posture from a
 blocklist, and it's closer to how permissioned markets actually work off-chain.
+
+---
+
+## day 2 — the same bug, three times
+
+i tried to wire the six scripts into a single `run-all` so someone could see
+the whole arc with one command. it broke twice before it worked, and both
+breaks were the same underlying mistake i'd already made once.
+
+`issuer-setup` failed with `tecOWNERS`. that means "this account owns objects
+that block this change" — the clawback flag can only be set on an issuer with
+no trust lines, and by then mine had several. the script had already printed
+`0x80840000` at the top, showing all three flags were on. it went ahead and
+tried to set them again anyway.
+
+then `issuer-powers` failed with `tecNO_LINE_REDUNDANT`, because it expected an
+account from `.env` to already be holding PRP, and that account had been
+replaced by a fresh one.
+
+three failures, one cause: **every script assumed it started from a known
+state, and none of them checked.**
+
+that's fine when i'm running them in order, having just run the one before. it
+is not fine for the person i actually built this for, who will clone the repo
+and run whatever looks interesting. and it's the exact failure i'd already been
+bitten by when a script printed confident labels over stale state.
+
+so the rule now is: each script either creates everything it needs, or reads
+what exists and adapts. `issuer-setup` checks each flag and skips what's
+already set. everything else funds its own accounts.
+
+`issuer-setup` also came out of the run-all loop entirely, because it's
+genuinely one-time — clawback can't be enabled after issuance, so the script
+can only ever succeed on a virgin account. a setup step that runs once isn't a
+step in a repeatable sequence, and pretending otherwise was the actual error.
+
+full run is green now. six scripts, start to finish, one command.
+
+---
+
+## day 3 — the thing worth building
+
+stepping back from the cookbook. i'd planned an SDK wrapping every primitive —
+identity, domains, issuance, market, settlement. then i looked at what i'd
+actually spent two days on.
+
+it wasn't the transaction wrappers. those are thin, and i wrote six of them in
+an afternoon. what cost me time was:
+
+- `tecPATH_DRY` meaning four different things, with no way to tell which
+- domain membership being derived, so there's nothing to query
+- trust line fields having a direction, and `authorized` being the wrong one
+- clawback failing on a flag i should have set two days earlier
+
+none of that is a wrapper problem. it's a **diagnostics problem**. the ledger
+tells you a transaction failed and gives you almost nothing about why.
+
+so the library became `xrpl-why`. it answers one question: what actually went
+wrong.
+
+first version handles `tecPATH_DRY` by going and looking. does the trust line
+exist? does the issuer require auth, and did it authorise this line? frozen,
+either side, or globally? does the sender hold enough? if everything checks
+out, it's probably DefaultRipple.
+
+tested it against a deliberately unauthorised payment:
+ledger said: tecPATH_DRY
+
+summary: The issuer requires authorization and has not authorized
+this trust line.
+
+checks run:
+
+read trust lines for destination rwHtVas...
+trust line exists
+read issuer flags: 0x00040000
+
+that gap between what the ledger says and what you needed to know is the whole
+product.
+
+one design choice i want to keep: it returns the list of checks it ran, not
+just a verdict. a diagnostic that asserts a cause is something you have to
+trust. one that shows its working is something you can verify. it also fails
+gracefully — when it can't determine the cause, you can see exactly how far it
+got before giving up.
+
+not publishing until there are tests. a diagnostic tool that confidently
+returns the wrong answer is worse than no tool at all, and i've already had one
+script this week produce well-formatted output that was completely wrong
+without erroring. that's the failure mode to be paranoid about here.
+
+---
+
+*continues.*
