@@ -216,7 +216,9 @@ bit position. two numbering schemes for the same thing.
 
 ---
 
-## day 2 — one error code, four meanings
+## day 2 — one error code, several meanings
+
+*(i got the count wrong here. see day 3 — the tests caught it.)*
 
 issuing tokens is three transactions. the holder opens a trust line, saying
 "i'm willing to hold up to X of this from this issuer" — you opt in, and you
@@ -326,7 +328,6 @@ that sounds like an obscure setting.
 
 ---
 
-*continues.*
 
 ## day 2 — a market that non-members can't enter
 
@@ -334,9 +335,12 @@ the last piece. alice and bob both hold KYC credentials and are in the domain.
 carol holds PRP, has an authorised trust line, and no credential.
 
 alice offers 100 PRP for 10 XRP inside the domain. bob takes the other side.
-alice 500 -> 400 PRP 100 -> 110 XRP
-bob 0 -> 100 PRP 100 -> 90 XRP
-carol 100 PRP, untouched
+
+```
+alice   500 -> 400 PRP    100 -> 110 XRP
+bob       0 -> 100 PRP    100 ->  90 XRP
+carol   100 PRP, untouched
+```
 
 a hundred tokens moved against ten XRP between two parties, neither of whom is
 the issuer. that's a real secondary market trade, settling under transfer
@@ -355,9 +359,10 @@ non-member isn't rejected at the point of trade; they were never in the same
 market. which is a stronger guarantee, because there's no code path where a
 check gets skipped and a trade slips through.
 
-carol also kept everything. she wasn't frozen, wasn't penalised, wasn't flagged.
-she just isn't in that venue. that's a meaningfully different posture from a
-blocklist, and it's closer to how permissioned markets actually work off-chain.
+carol also kept everything. she wasn't frozen, wasn't penalised, wasn't
+flagged. she just isn't in that venue. that's a meaningfully different posture
+from a blocklist, and it's closer to how permissioned markets actually work
+off-chain.
 
 ---
 
@@ -420,20 +425,22 @@ wrong.
 
 first version handles `tecPATH_DRY` by going and looking. does the trust line
 exist? does the issuer require auth, and did it authorise this line? frozen,
-either side, or globally? does the sender hold enough? if everything checks
-out, it's probably DefaultRipple.
+either side, or globally? does the sender hold enough? if everything checks out,
+it's probably DefaultRipple.
 
 tested it against a deliberately unauthorised payment:
+
+```
 ledger said: tecPATH_DRY
 
 summary: The issuer requires authorization and has not authorized
-this trust line.
+         this trust line.
 
 checks run:
-
-read trust lines for destination rwHtVas...
-trust line exists
-read issuer flags: 0x00040000
+  - read trust lines for destination rwHtVas...
+  - trust line exists
+  - read issuer flags: 0x00040000
+```
 
 that gap between what the ledger says and what you needed to know is the whole
 product.
@@ -448,6 +455,60 @@ not publishing until there are tests. a diagnostic tool that confidently
 returns the wrong answer is worse than no tool at all, and i've already had one
 script this week produce well-formatted output that was completely wrong
 without erroring. that's the failure mode to be paranoid about here.
+
+---
+
+
+
+---
+
+## day 3 — the tests falsified something i'd already published
+
+wrote the test suite for `xrpl-why` today. five cases, each one constructing a
+real failure on testnet and asserting the library names the right cause. no
+mocks — the whole claim of this library is that it knows what the ledger
+actually does, and testing it against responses i'd invented would undercut
+exactly the thing it's selling.
+
+two of the five failed. both were worth having.
+
+**the bug.** the frozen-line case fell through every check and landed on the
+DefaultRipple fallback. cause: `explain()` reads `account_lines` on the
+*destination*. when alice is frozen and sends to bob, i was inspecting bob's
+line — which is fine — and never looking at alice's. freeze can be on either
+side of a transfer and i only checked one.
+
+that would have shipped. the library would have confidently told people
+"probably DefaultRipple" every time a frozen holder tried to send, which is
+worse than saying nothing.
+
+**the wrong claim.** i had written, in this log and in the cookbook README,
+that `tecPATH_DRY` means four things, one of them being insufficient balance.
+
+it doesn't. insufficient balance returns **`tecPATH_PARTIAL`** — a completely
+different code, meaning "found a path, couldn't carry the full amount." three
+causes for `tecPATH_DRY`, and a fourth situation with its own code.
+
+i'd already pushed that claim to a public repo. it was wrong in public, with my
+name on it, and it took a test hitting the real network to find out.
+
+that's the whole argument for integration tests over mocks, in one example. a
+mock would have returned whatever i believed. the network returned what's
+true.
+
+the correction also improves the library — `tecPATH_PARTIAL` is genuinely more
+informative than `tecPATH_DRY`, so it gets its own branch rather than being
+lumped in with the others.
+
+five green now. the tests take three minutes because every case funds accounts
+and waits for validation, and i think that's the right trade. slow tests i
+trust beat fast tests i don't.
+
+one smaller thing worth noting: vitest has separate timeout budgets for tests
+and for hooks. i set `--testTimeout` and the whole suite still failed, because
+`beforeAll` funds an account and submits two transactions, and hooks default to
+ten seconds. anything doing real network work in setup needs `--hookTimeout`
+too.
 
 ---
 
