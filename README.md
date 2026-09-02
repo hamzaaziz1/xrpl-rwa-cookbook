@@ -40,10 +40,14 @@ with no transaction touching the domain and no allowlist to synchronise.
 accept it, so there are three states — absent, issued-but-unaccepted, and
 active. The middle one is easy to mistake for rejection.
 
-**`tecPATH_DRY` means at least four different things.** Missing trust line,
-unauthorized line, frozen line, or genuinely no path. The payment engine reports
-"no liquidity" regardless of cause, so anything user-facing has to disambiguate
-before showing an error.
+**`tecPATH_DRY` means at least three different things.** Missing trust line,
+unauthorized line, or frozen line — and the freeze can be on either the sender's
+side or the destination's. The payment engine reports "no liquidity" regardless
+of cause, so anything user-facing has to disambiguate before showing an error.
+
+**Insufficient balance is a different code.** It returns `tecPATH_PARTIAL`, not
+`tecPATH_DRY` — "found a path, couldn't carry the full amount." I had this wrong
+here until a test against the real network corrected it.
 
 **`AllowTrustLineClawback` cannot be enabled once tokens exist.** Set it before
 the first issuance or recreate the issuer account.
