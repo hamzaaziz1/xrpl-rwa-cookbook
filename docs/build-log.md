@@ -512,4 +512,75 @@ too.
 
 ---
 
+---
+
+## day 3 — published
+
+`xrpl-why@0.1.0` is on npm.
+
+the packaging was more fiddly than the code. things worth remembering:
+
+**`xrpl` is a peer dependency, not a dependency.** anyone using this library
+already has `xrpl` installed — it's the thing they're debugging. bundling a
+second copy causes version conflicts and duplicate client instances. peer deps
+say "you need this, bring your own."
+
+**`prepublishOnly` runs the build automatically**, so it's impossible to publish
+a stale `dist/`. small thing, but the failure it prevents is nasty: shipping
+compiled output that doesn't match the source in the repo.
+
+**`npm pack --dry-run` before publishing.** prints exactly what would ship. nine
+files, 6.1 kB, no `src`, no tests, no `.env`. last chance to catch something
+that shouldn't be public, and npm gives you no undo — you can unpublish for 72
+hours and that's it.
+
+**authentication was the hard part**, for a boring reason. `npm login` wants to
+open a browser, and WSL has no browser, and setting `BROWSER` to a windows path
+broke because `sensible-browser` splits on the spaces in "Program Files". ended
+up using a granular access token with 2FA bypass instead. that route is being
+restricted for direct publishing from january 2027, so the real answer
+eventually is publishing from CI on a tag. not today's problem.
+
+then the check that actually mattered — install it fresh from the public
+registry, in a clean directory, and import it:
+npm i xrpl-why xrpl
+node -e "import('xrpl-why').then(m => console.log(Object.keys(m)))"
+[ 'explain' ]
+
+that's the only test that proves the package works for someone who isn't me.
+everything before it was testing my local source tree.
+
+---
+
+## where this is after three days
+
+started with no XRPL experience at all. what exists now:
+
+**xrpl-rwa-cookbook** — six scripts covering the full regulated-tokenization
+arc: credentials, permissioned domains, issuer controls, issuance, freeze and
+clawback, and a permissioned secondary market. `npm run all` runs the whole
+thing against testnet in one command. every script creates its own state, which
+took three separate failures to learn.
+
+**xrpl-why** — published to npm. explains why an XRPL transaction actually
+failed, by inspecting live ledger state rather than guessing from the error
+code. five integration tests against testnet, no mocks.
+
+**this log** — including the parts where i was wrong. the plan changing before i
+wrote code because MPTs can't trade on the DEX yet. the same idempotency bug
+three times. a test suite falsifying a claim i'd already pushed to a public
+readme.
+
+the thing i didn't expect: the most interesting findings all came from the
+ledger disagreeing with me. `tecPATH_DRY` where i expected `tecNO_AUTH`.
+`tecPATH_PARTIAL` where i expected `tecPATH_DRY`. `BatchV1_1` live on devnet but
+not testnet. none of that is in the documentation in a form i'd have found by
+reading. it came from running things and being surprised.
+
+next: a write-up on `tecPATH_DRY` specifically. the material is already in this
+log, it's useful to anyone building on XRPL regardless of whether they use my
+library, and it points at the package without being an advert for it.
+
+---
+
 *continues.*
